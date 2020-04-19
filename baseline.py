@@ -31,30 +31,6 @@ def get_sim_item(df, user_col, item_col, use_iif=False):
             sim_item_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
     return sim_item_corr, user_item_dict
 
-def get_sim_user(df, user_col, item_col, use_iif=False):
-    user_item_ = df.groupby(user_col)[item_col].agg(set).reset_index()
-    user_item_dict = dict(zip(user_item_[user_col], user_item_[item_col]))
-
-    sim_item = {}
-    item_cnt = defaultdict(int)
-    for user, items in tqdm(user_item_dict.items()):
-        for i in items:
-            item_cnt[i] += 1
-            sim_item.setdefault(i, {})
-            for relate_item in items:
-                if i == relate_item:
-                    continue
-                sim_item[i].setdefault(relate_item, 0)
-                if not use_iif:
-                    sim_item[i][relate_item] += 1
-                else:
-                    sim_item[i][relate_item] += 1 / math.log(1 + len(items))
-    sim_item_corr = sim_item.copy()
-    for i, related_items in tqdm(sim_item.items()):
-        for j, cij in related_items.items():
-            sim_item_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
-    return sim_item_corr, user_item_dict
-
 def recommend(sim_item_corr, user_item_dict, user_id, top_k, item_num):
     rank = {}
     interacted_items = user_item_dict[user_id]
@@ -65,6 +41,40 @@ def recommend(sim_item_corr, user_item_dict, user_id, top_k, item_num):
                 rank[j] += wij
     return sorted(rank.items(), key=lambda d: d[1], reverse=True)[:item_num]
 
+def get_sim_user(df, user_col, item_col, use_iif=False):
+    user_item_ = df.groupby(user_col)[item_col].agg(set).reset_index()
+    user_item_dict = dict(zip(user_item_[user_col], user_item_[item_col]))
+
+    sim_user = {}
+    item_cnt = defaultdict(int)
+
+    for user, items in tqdm(user_item_dict.items()):
+        for i in items:
+            item_cnt[user] += 1
+            sim_user.setdefault(user, {})
+            for relate_user, relate_item in user_item_dict.items():
+                if user == relate_user:
+                    continue
+                sim_user[user].setdefault(relate_user, 0)
+                for item in relate_item:
+                    if i == item:
+                        sim_user[user][relate_user] += 1
+
+    sim_user_corr = sim_user.copy()
+    for i, related_user in tqdm(sim_user.items()):
+        for j, cij in related_user.items():
+            sim_user_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
+    return sim_user_corr, user_item_dict
+
+def recommend1(sim_user_corr, user_item_dict, user_id, top_k, item_num):
+    rank = {}
+    interacted_items = user_item_dict[user_id]
+    for relate_user, wij in sorted(sim_user_corr[user_id], reverse=True)[0:top_k]:
+        for item in user_item_dict[relate_user]:
+            if item not in interacted_items:
+                rank.setdefault(item, 0)
+                rank[item] += wij
+    return sorted(rank.items(), key=lambda d: d[1], reverse=True)[:item_num]
 
 # fill user to 50 items
 def get_predict(df, pred_col, top_fill):
@@ -101,10 +111,10 @@ if __name__ == "__main__":
 
         all_click = click_train.append(click_test)
         whole_click = whole_click.append(all_click)
-        item_sim_list, user_item = get_sim_item(whole_click, 'user_id', 'item_id', use_iif=True)
+        user_sim_list, user_item = get_sim_user(whole_click, 'user_id', 'item_id', use_iif=True)
 
         for i in tqdm(click_test['user_id'].unique()):
-            rank_item = recommend(item_sim_list, user_item, i, 500, 50)
+            rank_item = recommend(user_sim_list, user_item, i, 500, 50)
             for j in rank_item:
                 recom_item.append([i, j[0], j[1]])
     # find most popular items
