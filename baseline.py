@@ -66,10 +66,77 @@ def get_sim_user(df, user_col, item_col, use_iif=False):
             sim_user_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
     return sim_user_corr, user_item_dict
 
+def get_sim_user_reverse(df, user_col, item_col, use_iif=False):
+    user_item_ = df.groupby(user_col)[item_col].agg(set).reset_index()
+    user_item_dict = dict(zip(user_item_[user_col], user_item_[item_col]))
+
+    item_cnt = defaultdict(int)
+    item_users = {}
+    for u, u_item in tqdm(user_item_dict.items()):
+        for item in u_item:
+            if item not in item_users:
+                item_users[item] = set()
+            item_users[item].add(u)
+
+    c = dict()
+    for item, u_user in tqdm(item_users.items()):
+        for u in u_user:
+            item_cnt[u] += 1
+            c.setdefault(u, {})
+            for v in u_user:
+                if v == u:
+                    continue
+                c[u].setdefault(v, 0)
+                c[u][v] += 1
+
+    sim_user_corr = c.copy()
+    for i, related_user in tqdm(c.items()):
+        for j, cij in related_user.items():
+            sim_user_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
+    return sim_user_corr, user_item_dict
+
+
+def get_sim_user_reverse1(df, user_col, item_col, use_iif=False):
+    """
+    减轻热门item的权重
+    :param df:
+    :param user_col:
+    :param item_col:
+    :param use_iif:
+    :return:
+    """
+    user_item_ = df.groupby(user_col)[item_col].agg(set).reset_index()
+    user_item_dict = dict(zip(user_item_[user_col], user_item_[item_col]))
+
+    item_cnt = defaultdict(int)
+    item_users = {}
+    for u, u_item in tqdm(user_item_dict.items()):
+        for item in u_item:
+            if item not in item_users:
+                item_users[item] = set()
+            item_users[item].add(u)
+
+    c = dict()
+    for item, u_user in tqdm(item_users.items()):
+        for u in u_user:
+            item_cnt[u] += 1
+            c.setdefault(u, {})
+            for v in u_user:
+                if v == u:
+                    continue
+                c[u].setdefault(v, 0)
+                c[u][v] += 1/math.log(1+len(u_user))
+
+    sim_user_corr = c.copy()
+    for i, related_user in tqdm(c.items()):
+        for j, cij in related_user.items():
+            sim_user_corr[i][j] = cij / math.sqrt(item_cnt[i] * item_cnt[j])
+    return sim_user_corr, user_item_dict
+
 def recommend1(sim_user_corr, user_item_dict, user_id, top_k, item_num):
     rank = {}
     interacted_items = user_item_dict[user_id]
-    for relate_user, wij in sorted(sim_user_corr[user_id], reverse=True)[0:top_k]:
+    for relate_user, wij in sorted(sim_user_corr[user_id].items(), reverse=True)[0:top_k]:
         for item in user_item_dict[relate_user]:
             if item not in interacted_items:
                 rank.setdefault(item, 0)
@@ -111,10 +178,10 @@ if __name__ == "__main__":
 
         all_click = click_train.append(click_test)
         whole_click = whole_click.append(all_click)
-        user_sim_list, user_item = get_sim_user(whole_click, 'user_id', 'item_id', use_iif=True)
+        user_sim_list, user_item = get_sim_user_reverse(whole_click, 'user_id', 'item_id', use_iif=True)
 
         for i in tqdm(click_test['user_id'].unique()):
-            rank_item = recommend(user_sim_list, user_item, i, 500, 50)
+            rank_item = recommend1(user_sim_list, user_item, i, 500, 50)
             for j in rank_item:
                 recom_item.append([i, j[0], j[1]])
     # find most popular items
@@ -123,4 +190,4 @@ if __name__ == "__main__":
 
     recom_df = pd.DataFrame(recom_item, columns=['user_id', 'item_id', 'sim'])
     result = get_predict(recom_df, 'sim', top50_click)
-    result.to_csv('baseline.csv', index=False, header=None)
+    result.to_csv('user_cf_baseline.csv', index=False, header=None)
